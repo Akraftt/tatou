@@ -8,6 +8,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
+      - ./secrets:/app/secrets:ro
       - user-files:/app/storage
     environment:
       - PYTHONUNBUFFERED=1
