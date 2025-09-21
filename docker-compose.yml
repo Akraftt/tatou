@@ -11,6 +11,9 @@ services:
       - ./secrets:/app/secrets:ro
       - user-files:/app/storage
     environment:
+      - RMAP_CLIENT_KEYS_DIR=/app/secrets/clients
+      - RMAP_SERVER_PUB=/app/secrets/server_pub.asc
+      - RMAP_SERVER_PRIV=/app/secrets/server_priv.asc
       - PYTHONUNBUFFERED=1
       # DB connection details for future use by the API
       - DB_HOST=db
