@@ -22,6 +22,7 @@ except Exception:  # dill is optional
 
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
+from rmap_service import register_rmap_routes
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 
 def create_app():
@@ -810,6 +811,7 @@ def create_app():
             "position": position
         }), 201
 
+    register_rmap_routes(app, get_engine)
     return app
     
 
@@ -819,4 +821,6 @@ app = create_app()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+
 
