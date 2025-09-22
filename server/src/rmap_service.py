@@ -54,28 +54,38 @@ class RmapService:
     # ------------------------------------------------------------------
     # Exposed route handlers
     # ------------------------------------------------------------------
-    def handle_initiate(self):
-        data = request.get_json(silent=True) or {}
-        payload = data.get("payload")
-        if not isinstance(payload, str) or not payload:
-            return jsonify({"error": "payload must be a non-empty base64 string"}), 400
+def handle_initiate(self):
+    data = request.get_json(silent=True) or {}
+    payload = data.get("payload")
+    if not isinstance(payload, str) or not payload:
+        return jsonify({"error": "payload must be a non-empty base64 string"}), 400
 
-        response = self.rmap.handle_message1({"payload": payload})
-        if "error" in response:
-            current_app.logger.debug("RMAP message1 rejected: %s", response["error"])
-            return jsonify(response), 400
+    # 1) Decrypt first to read identity and validate it exists
+    try:
+        decrypted = self.identity_manager.decrypt_for_server(payload)
+    except DecryptionError as exc:
+        current_app.logger.debug("RMAP initiate decrypt failed: %s", exc)
+        return jsonify({"error": str(exc)}), 400
 
-        identity = str(decrypted.get("identity", "")).strip()
-        if not identity:
-            return jsonify({"error": "decrypted identity missing"}), 400
+    identity = str(decrypted.get("identity", "")).strip()
+    if not identity:
+        return jsonify({"error": "decrypted identity missing"}), 400
 
-        session = self._build_session(identity)
-        if session is None:
-            return jsonify({"error": "failed to record RMAP session"}), 500
-        self._sessions[identity] = session
-        self._cleanup_expired_sessions()
+    # 2) Let the RMAP library build Response 1 and record the nonces
+    response = self.rmap.handle_message1({"payload": payload})
+    if "error" in response:
+        current_app.logger.debug("RMAP message1 rejected: %s", response["error"])
+        return jsonify(response), 400
 
-        return jsonify(response), 200
+    # 3) Save the session for this identity
+    session = self._build_session(identity)
+    if session is None:
+        return jsonify({"error": "failed to record RMAP session"}), 500
+    self._sessions[identity] = session
+    self._cleanup_expired_sessions()
+
+    return jsonify(response), 200
+
 
     def handle_get_link(self):
         data = request.get_json(silent=True) or {}
