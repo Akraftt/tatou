@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   server:
     build:
@@ -11,9 +9,14 @@ services:
       - ./secrets:/app/secrets:ro
       - user-files:/app/storage
     environment:
+      - STORAGE_DIR=/app/storage
+      - RMAP_METHOD=toy-eof  
+      - RMAP_WM_KEY=course-demo-key
+      - RMAP_SOURCE_DOC_ID=1
       - RMAP_CLIENT_KEYS_DIR=/app/secrets/clients
       - RMAP_SERVER_PUB=/app/secrets/server_pub.asc
       - RMAP_SERVER_PRIV=/app/secrets/server_priv.asc
+      - RMAP_SERVER_PRIV_PASSPHRASE=123
       - PYTHONUNBUFFERED=1
       # DB connection details for future use by the API
       - DB_HOST=db

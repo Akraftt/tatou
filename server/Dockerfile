@@ -10,20 +10,21 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy project description, to instal dependencies
+# Copy project definition first so deps layer can cache
 COPY pyproject.toml /app/pyproject.toml
 
-# Install runtime dependencies
+# Install runtime dependencies (editable install is fine here)
 RUN pip install --no-cache-dir -e .
 
-# Copy sources after dependencies installation
+# App files
 COPY src /app/src
 COPY flag /app/flag
 COPY entrypoint.sh /app/entrypoint.sh
-RUN pip install --no-cache-dir -e .
+
+# ✅ Fix Windows line endings and make entrypoint executable
+RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 EXPOSE 5000
 
-# Default command runs the web server
-CMD ["./entrypoint.sh"]
-
+# ✅ Use ENTRYPOINT (your script already execs gunicorn)
+ENTRYPOINT ["/app/entrypoint.sh"]

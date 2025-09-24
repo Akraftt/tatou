@@ -135,6 +135,13 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
+    
+
+    
+    
+
+
+
 
     # POST /api/login {login, password}
     @app.post("/api/login")
@@ -423,6 +430,9 @@ def create_app():
 
         resp.headers["Cache-Control"] = "private, max-age=0"
         return resp
+    
+
+    
     
     # Helper: resolve path safely under STORAGE_DIR (handles absolute/relative)
     def _safe_resolve_under_storage(p: str, storage_root: Path) -> Path:
@@ -814,9 +824,21 @@ def create_app():
     register_rmap_routes(app, get_engine)
     return app
     
-
 # WSGI entrypoint
 app = create_app()
+def _security_headers(resp):
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    )
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    return resp
+
+app.after_request(_security_headers)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
