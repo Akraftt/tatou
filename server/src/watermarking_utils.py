@@ -1,4 +1,4 @@
-"""watermarking_utils.py
+""""watermarking_utils.py
 
 Utility functions and registry for PDF watermarking methods.
 
@@ -8,7 +8,6 @@ This module exposes:
   :class:`~watermarking_method.WatermarkingMethod`.
 - :func:`explore_pdf`: build a lightweight JSON-serializable tree of PDF
   nodes with deterministic identifiers ("name nodes").
-- :func:`apply_watermark`: run a concrete watermarking method on a PDF.
 - :func:`apply_watermark`: run a concrete watermarking method on a PDF.
 - :func:`read_watermark`: recover a secret using a concrete method.
 - :func:`register_method` / :func:`get_method`: registry helpers.
@@ -31,6 +30,7 @@ from __future__ import annotations
 from typing import Any, Dict, Final, Iterable, List, Mapping
 import base64
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -44,13 +44,128 @@ from watermarking_method import (
 from add_after_eof import AddAfterEOF
 from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
 
+
+# --------------------
+# Anton EOF (hardened append-before-EOF with HMAC)
+# --------------------
+
+class AntonEOF(WatermarkingMethod):
+    """Append a single signed marker line just before the final %%EOF.
+
+    Line format (ASCII, single line):
+
+        %ANTONWM <base64(secret)> <hex(hmac_sha256(secret,key))>
+
+    - The *secret* is raw bytes (UTF-8 encoded) then Base64-encoded.
+    - The tag is placed *before* the final ``%%EOF``. If ``%%EOF`` is
+      missing (malformed PDF), we append both the tag and ``%%EOF``.
+    - On read, the line is parsed and the HMAC validated with the
+      provided *key*. If the HMAC does not match, a ValueError is raised.
+    """
+
+    name: str = "anton-eof"
+    description: str = "Append signed Base64 tag before %%EOF (HMAC-SHA256)"
+
+    _MARKER_PREFIX: Final[bytes] = b"%ANTONWM "
+
+    def _sign(self, secret: str, key: str) -> str:
+        mac = hmac.new(key.encode("utf-8"), secret.encode("utf-8"), hashlib.sha256)
+        return mac.hexdigest()
+
+    def _insert_before_eof(self, data: bytes, line: bytes) -> bytes:
+        """Return new bytes with `line` inserted before the last %%EOF."""
+        idx = data.rfind(b"%%EOF")
+        if idx == -1:
+            # No EOF marker: append our line and a proper EOF terminator.
+            out = bytearray(data)
+            if not out.endswith(b"\n"):
+                out.extend(b"\n")
+            out.extend(line)
+            if not line.endswith(b"\n"):
+                out.extend(b"\n")
+            out.extend(b"%%EOF\n")
+            return bytes(out)
+
+        # Split at last %%EOF, keep any trailing whitespace after it.
+        head = data[:idx]
+        tail = data[idx:]  # starts with %%EOF
+        # Ensure our line is separated by a newline.
+        out = bytearray()
+        out.extend(head)
+        if not head.endswith(b"\n"):
+            out.extend(b"\n")
+        out.extend(line)
+        if not line.endswith(b"\n"):
+            out.extend(b"\n")
+        out.extend(tail)
+        return bytes(out)
+
+    # --- WatermarkingMethod API ---
+
+    def is_watermark_applicable(self, pdf: PdfSource, position: str | None = None) -> bool:
+        # This method does not require a specific structure; any bytes starting with %PDF- are OK.
+        try:
+            data = load_pdf_bytes(pdf)
+        except Exception:
+            return False
+        return data.startswith(b"%PDF-")
+
+    def add_watermark(
+        self,
+        pdf: PdfSource,
+        secret: str,
+        key: str,
+        position: str | None = None,
+    ) -> bytes:
+        data = load_pdf_bytes(pdf)
+
+        # Build signed payload
+        sig = self._sign(secret, key)
+        b64 = base64.b64encode(secret.encode("utf-8")).decode("ascii")
+        line = self._MARKER_PREFIX + f"{b64} {sig}".encode("ascii")
+
+        return self._insert_before_eof(data, line)
+
+    def read_secret(self, pdf: PdfSource, key: str) -> str:
+        data = load_pdf_bytes(pdf)
+
+        # Search tail region for the marker line (look in the last ~8 KiB)
+        tail = data[-8192:] if len(data) > 8192 else data
+        # Accept CRLF or LF line endings
+        lines = tail.splitlines()
+
+        # Walk from the end backward to find the most recent marker
+        for raw in reversed(lines):
+            if raw.startswith(self._MARKER_PREFIX):
+                try:
+                    payload = raw[len(self._MARKER_PREFIX):].strip().decode("ascii", "replace")
+                    b64_part, sig = payload.split(" ", 1)
+                    secret = base64.b64decode(b64_part.encode("ascii"), validate=True).decode("utf-8", "replace")
+                except Exception as exc:
+                    raise ValueError("anton-eof: invalid marker format") from exc
+
+                # Verify HMAC
+                expected = hmac.new(key.encode("utf-8"), secret.encode("utf-8"), hashlib.sha256).hexdigest()
+                if not hmac.compare_digest(sig, expected):
+                    raise ValueError("anton-eof: HMAC verification failed")
+
+                return secret
+
+        raise ValueError("anton-eof: watermark not found")
+    
+    def get_usage(self) -> str:
+        return "Embeds '%ANTONWM <base64(secret)> <hmac-hex>' just before %%EOF; HMAC key = provided key."
+
+
+
 # --------------------
 # Method registry
 # --------------------
 
 METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
-    UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF()
+    UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
+    AntonEOF.name: AntonEOF(),  # <-- your personal method
 }
 """Registry of available watermarking methods.
 
@@ -102,8 +217,8 @@ def is_watermarking_applicable(
     method: str | WatermarkingMethod,
     pdf: PdfSource,
     position: str | None = None,
-) -> bytes:
-    """Apply a watermark using the specified method and return new PDF bytes."""
+) -> bool:
+    """Check if a method can apply a watermark to this PDF."""
     m = get_method(method)
     return m.is_watermark_applicable(pdf=pdf, position=position)
 
@@ -247,6 +362,5 @@ __all__ = [
     "apply_watermark",
     "read_watermark",
     "explore_pdf",
-    "is_watermarking_applicable"
+    "is_watermarking_applicable",
 ]
-

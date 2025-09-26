@@ -10,7 +10,7 @@ services:
       - user-files:/app/storage
     environment:
       - STORAGE_DIR=/app/storage
-      - RMAP_METHOD=toy-eof  
+      - RMAP_METHOD=anton-eof  
       - RMAP_WM_KEY=course-demo-key
       - RMAP_SOURCE_DOC_ID=1
       - RMAP_CLIENT_KEYS_DIR=/app/secrets/clients
